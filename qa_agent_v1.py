@@ -1,13 +1,21 @@
 import os
 import json
+import asyncio
 from datetime import datetime
 from typing import TypedDict, Annotated, List, Dict, Any
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright, Browser, Page
 from langgraph.graph import StateGraph, START, END
 from langchain_google_genai import ChatGoogleGenerativeAI
+import builtins
+import functools
+import sys
+
 
 load_dotenv()
+sys.stdout.reconfigure(line_buffering=True)
+
+print = functools.partial(builtins.print, flush=True)
 
 # --- 1. STATE DEFINITION (RL INFRASTRUCTURE) ---
 class AgentState(TypedDict):
@@ -104,6 +112,9 @@ async def analyze_and_decide(state: AgentState) -> dict:
             last_move_warning = f"NOTE: You just did '{last_move['action']}'. Try a DIFFERENT action to find new vulnerabilities."
 
     print(f"🤔 Agent Thinking... (Current Reward: {current_reward})")
+    
+    # Add delay to make the loop observable
+    await asyncio.sleep(2)  # 2 second delay between iterations
 
     # 3. The Policy Model (Gemini)
     model = ChatGoogleGenerativeAI(
@@ -134,12 +145,24 @@ async def analyze_and_decide(state: AgentState) -> dict:
     - -0.5: STAGNATION (Repeating the same action).
     - -1.0: Failed action (Element not found).
     
-    Choose your next action. Return ONLY JSON:
+    Choose your next action. EXPLAIN YOUR THINKING - this will be shown in the UI!
+    
+    Return ONLY JSON with this structure:
     {{
+      "thinking": "What you see + why you're doing this (1-2 sentences)",
       "action": "fill_input" | "click_element" | "check_responsiveness" | "finish",
       "targetIndex": <number>,
-      "actionDetails": "<strategy reasoning>",
-      "inputValue": "<test_payload>" 
+      "inputValue": "<test_payload>",
+      "expecting": "What should happen if this works"
+    }}
+    
+    Example:
+    {{
+      "thinking": "I see a login form with email/password fields. The email input might be vulnerable to SQLi, so I'll try a basic authentication bypass payload.",
+      "action": "fill_input",
+      "targetIndex": 3,
+      "inputValue": "' OR 1=1--",
+      "expecting": "If vulnerable, I should bypass authentication or see a SQL error message"
     }}
     
     (Example payloads: "test<script>alert(1)</script>", "' OR '1'='1", "admin")
@@ -155,11 +178,19 @@ async def analyze_and_decide(state: AgentState) -> dict:
             
         decision = json.loads(content)
         
+        # Print the agent's thinking for UI/debugging
+        print(f"\n💭 THINKING: {decision.get('thinking', 'N/A')}")
+        print(f"⚡ ACTION: {decision['action']}")
+        if decision.get('inputValue'):
+            print(f"💉 PAYLOAD: {decision.get('inputValue')}")
+        print(f"🔮 EXPECTING: {decision.get('expecting', 'N/A')}\n")
+        
         return {
             "lastAction": decision["action"],
             "actionPayload": {
                 "targetIndex": decision.get("targetIndex"),
-                "actionDetails": decision.get("actionDetails", ""),
+                "thinking": decision.get("thinking", ""),
+                "expecting": decision.get("expecting", ""),
                 "inputValue": decision.get("inputValue", "")
             }
         }
@@ -233,12 +264,13 @@ async def execute_action(state: AgentState) -> dict:
         "actionPayload": {**payload, "targetDetails": target_element_details} 
     }
 
-# --- 3. THE REWARD MODEL NODE (The "Stagnation Fix" Version) ---
+# --- 3. THE REWARD MODEL NODE (Evidence-Based, No Hallucination) ---
 async def evaluate_reward(state: AgentState) -> dict:
     """
     Calculates the scalar reward for the last action. 
-    Includes logic to penalize repetitive actions (Stagnation Penalty).
+    Checks ACTUAL page state instead of hallucinating from logs.
     """
+    page = state["page"]
     logs = state["logs"][-1]
     last_action = state["lastAction"]
     step = state["steps"]
@@ -252,51 +284,48 @@ async def evaluate_reward(state: AgentState) -> dict:
     is_repeat = False
     if len(trajectory) > 0:
         prev = trajectory[-1]
-        # If agent repeats the exact same high-level action type
         if prev["action"] == last_action and "finish" not in last_action:
             is_repeat = True
 
-    # 2. Use Gemini to Judge the Outcome
-    model = ChatGoogleGenerativeAI(
-        model="gemini-2.0-flash-exp", 
-        api_key=os.getenv("GOOGLE_API_KEY"),
-        temperature=0.0
-    )
-    
-    prompt = f"""
-    You are a Security Reward Function. Evaluate this action result.
-    
-    Action: {last_action}
-    Log: {logs}
-    Is Repeat Action: {is_repeat}
-    
-    Assign a Reward Score (-1.0 to 1.0):
-    - 1.0: Critical Success (Found 500 Error, Crash, SQLi, XSS).
-    - 0.5: Robustness Warning (404, Broken UI, Lag).
-    - 0.1: Standard Valid Action (200 OK) - ONLY IF NEW.
-    - -0.5: STAGNATION (Repeated action or no state change).
-    - -1.0: Script Error / Failed Action.
-    
-    Return JSON: {{ "score": float, "reason": "brief explanation" }}
-    """
+    # 2. ACTUAL EVIDENCE CHECKS (Not hallucination)
+    score = 0.0
+    reason = "No significant outcome"
     
     try:
-        response = await model.ainvoke(prompt)
-        content = str(response.content).replace("```json", "").replace("```", "").strip()
-        if "{" in content: content = content[content.find("{"):content.rfind("}")+1]
+        # Check page title for error indicators
+        title = await page.title()
+        url = page.url
         
-        reward_data = json.loads(content)
-        score = float(reward_data.get("score", 0.0))
-        reason = reward_data.get("reason", "Unknown")
-
-        # 3. Force Penalty Override
-        if is_repeat and score >= 0:
+        # REAL CHECKS:
+        if "500" in title or "Internal Server Error" in title:
+            score = 1.0
+            reason = "🔥 Server Error (500) detected - REAL vulnerability found!"
+        elif "error" in title.lower() and "404" not in title:
+            score = 0.8
+            reason = "⚠️ Error page detected - potential vulnerability"
+        elif "404" in title:
+            score = 0.5
+            reason = "404 Not Found - Robustness issue"
+        elif is_repeat:
             score = -0.5
-            reason = "Forced Penalty: Action Stagnation (Repeated Action)"
+            reason = "Stagnation: Repeated action"
+        elif "Error" in logs or "failed" in logs.lower():
+            score = -1.0
+            reason = "Action execution failed"
+        elif last_action == "fill_input":
+            # For inputs, give small reward for trying, but don't hallucinate success
+            score = 0.1
+            reason = "Input filled successfully (no crash detected)"
+        elif last_action == "click_element":
+            score = 0.1
+            reason = "Click executed successfully"
+        else:
+            score = 0.1
+            reason = "Standard action completed"
             
-    except:
-        score = 0.0
-        reason = "Error parsing reward"
+    except Exception as e:
+        score = -1.0
+        reason = f"Error during evaluation: {str(e)}"
 
     print(f"💰 REWARD: {score} ({reason})")
     
@@ -389,7 +418,7 @@ def create_workflow():
 async def main():
     print("🏎️ Starting SecGym Agent...")
     app = create_workflow()
-    await app.ainvoke({})
+    await app.ainvoke({}, config={"recursion_limit": 1000})
     print("✅ Session Finished. Check 'rl_training_data.json' and 'qa_report.md'.")
 
 if __name__ == "__main__":
