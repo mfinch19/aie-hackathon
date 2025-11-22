@@ -1,6 +1,6 @@
 # QA Automation Report
 
-**Date**: 22/11/2025, 03:16:17 PM
+**Date**: 22/11/2025, 03:27:39 PM
 **Total Steps**: 10
 **Pages Visited**: 1
 
@@ -11,7 +11,7 @@
 - **Visited URLs**:
   - http://localhost:3000/home
 - **Total Actions Performed**: 10
-- **Screenshots Captured**: 14
+- **Screenshots Captured**: 16
 - **Issues Found**: 0
 
 ---
@@ -31,10 +31,10 @@
 5. Step 3: Filled input at index 12 with "test2@example.com".
 6. Step 4: Clicking <button> at index 13 - Click Subscribe button
 7. Step 5: Checking responsiveness.
-8. Step 6: Filled input at index 11 with "AnotherP@$$wOrd".
-9. Step 7: Filled input at index 10 with "test3@example.com".
-10. Step 8: Clicking <button> at index 13 - Click Subscribe button
-11. Step 9: Filled input at index 12 with "test4@example.com".
+8. Step 6: Clicking <a> at index 14 - Click Terms of Use
+9. Step 7: Clicking <a> at index 16 - Click Privacy Policy
+10. Step 8: Clicking <a> at index 15 - Click Information Collection Notice
+11. Step 9: Filled input at index 11 with "P@ssword123".
 
 ---
 
@@ -68,18 +68,24 @@
 ![qa_screenshots/step-5-mobile.png](qa_screenshots/step-5-mobile.png)
 
 ### Screenshot 10
-![qa_screenshots/step-6-input.png](qa_screenshots/step-6-input.png)
+![qa_screenshots/step-6-before-click.png](qa_screenshots/step-6-before-click.png)
 
 ### Screenshot 11
-![qa_screenshots/step-7-input.png](qa_screenshots/step-7-input.png)
+![qa_screenshots/step-6-after-click.png](qa_screenshots/step-6-after-click.png)
 
 ### Screenshot 12
-![qa_screenshots/step-8-before-click.png](qa_screenshots/step-8-before-click.png)
+![qa_screenshots/step-7-before-click.png](qa_screenshots/step-7-before-click.png)
 
 ### Screenshot 13
-![qa_screenshots/step-8-after-click.png](qa_screenshots/step-8-after-click.png)
+![qa_screenshots/step-7-after-click.png](qa_screenshots/step-7-after-click.png)
 
 ### Screenshot 14
+![qa_screenshots/step-8-before-click.png](qa_screenshots/step-8-before-click.png)
+
+### Screenshot 15
+![qa_screenshots/step-8-after-click.png](qa_screenshots/step-8-after-click.png)
+
+### Screenshot 16
 ![qa_screenshots/step-9-input.png](qa_screenshots/step-9-input.png)
 
 
@@ -87,8 +93,8 @@
 
 ## 🎯 Test Coverage
 
-- Form Inputs: 6 tested
-- Button Clicks: 3 tested
+- Form Inputs: 4 tested
+- Button Clicks: 5 tested
 - Responsiveness Checks: 1 tested
 
 ---
